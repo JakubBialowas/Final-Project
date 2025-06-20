@@ -1,0 +1,13 @@
+def calculate_statistics(conn, sensor_id):
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT MIN(value), MAX(value), AVG(value)
+        FROM measurements
+        WHERE sensorId = ?
+    ''', (sensor_id,))
+    result = cursor.fetchone()
+    return {
+        'min': result[0],
+        'max': result[1],
+        'avg': result[2]
+    }

@@ -1,0 +1,556 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+import json
+from air_quality import api 
+from datetime import datetime 
+
+MESSAGES = {
+    "en": {
+        "app_title": "Air Quality Monitor",
+        "select_language": "Select Language:",
+        "polish": "Polish",
+        "english": "English",
+        "main_menu_title": "Main Menu - Select Location",
+        "select_province": "Select Province:",
+        "select_district": "Select District:",
+        "select_commune": "Select Commune:",
+        "select_city": "Select City:",
+        "select_station": "Select Station:",
+        "load_data": "Load Data for Station",
+        "data_loaded": "Data loaded for station:",
+        "error": "Error",
+        "no_stations_found": "No stations found for the selected city.",
+        "loading_stations_api": "Loading stations from API...",
+        "api_error_title": "API Connection Error",
+        "api_error_message": "Could not connect to the GIOŚ API. Please check your internet connection or try again later. You may use historical data if available.",
+        "language_selected": "Language set to {language}",
+        "welcome_message": "Welcome to the Air Quality Monitor! Please select a language to begin.",
+        "no_province_selected": "Please select a Province first.",
+        "no_district_selected": "Please select a District first.",
+        "no_commune_selected": "Please select a Commune first.",
+        "no_city_selected": "Please select a City first.",
+        "data_fetch_success": "Successfully loaded station data from API.",
+        "fetch_sensors_fail": "Failed to fetch sensors for the selected station.",
+        "no_sensors_found": "No sensors found for this station.",
+        "fetch_measurements_fail": "Failed to fetch measurement data for the selected sensor.",
+        "process_data_fail": "Failed to process measurement data.",
+        "data_points_fetched": "Fetched and processed {count} data points for {param_name}.",
+        "select_sensor": "Select Sensor:",
+    },
+    "pl": {
+        "app_title": "Monitor Jakości Powietrza",
+        "select_language": "Wybierz język:",
+        "polish": "Polski",
+        "english": "Angielski",
+        "main_menu_title": "Menu Główne - Wybierz Lokalizację",
+        "select_province": "Wybierz województwo:",
+        "select_district": "Wybierz powiat:",
+        "select_commune": "Wybierz gminę:",
+        "select_city": "Wybierz miejscowość:",
+        "select_station": "Wybierz stację:",
+        "load_data": "Wczytaj dane dla stacji",
+        "data_loaded": "Dane wczytane dla stacji:",
+        "error": "Błąd",
+        "no_stations_found": "Nie znaleziono stacji dla wybranej miejscowości.",
+        "loading_stations_api": "Ładowanie stacji z API...",
+        "api_error_title": "Błąd Połączenia z API",
+        "api_error_message": "Nie można połączyć się z usługą GIOŚ API. Proszę sprawdzić połączenie internetowe lub spróbować później. Możesz użyć danych historycznych, jeśli są dostępne.",
+        "language_selected": "Język ustawiony na {language}",
+        "welcome_message": "Witaj w Monitorze Jakości Powietrza! Proszę wybrać język, aby rozpocząć.",
+        "no_province_selected": "Proszę najpierw wybrać województwo.",
+        "no_district_selected": "Proszę najpierw wybrać powiat.",
+        "no_commune_selected": "Proszę najpierw wybrać gminę.",
+        "no_city_selected": "Proszę najpierw wybrać miejscowość.",
+        "data_fetch_success": "Pomyślnie załadowano dane stacji z API.",
+        "fetch_sensors_fail": "Nie udało się pobrać sensorów dla wybranej stacji.",
+        "no_sensors_found": "Nie znaleziono sensorów dla tej stacji.",
+        "fetch_measurements_fail": "Nie udało się pobrać danych pomiarowych dla wybranego sensora.",
+        "process_data_fail": "Nie udało się przetworzyć danych pomiarowych.",
+        "data_points_fetched": "Pobrano i przetworzono {count} punktów danych dla {param_name}.",
+        "select_sensor": "Wybierz sensor:",
+    }
+}
+
+
+class AirQualityApp:
+    """
+    Main application class for the Air Quality Monitor GUI.
+    Handles language selection and cascading location selection for stations.
+    Fetches station data from the GIOŚ API using the 'api' module.
+    """
+
+    def __init__(self, master):
+        """
+        Initializes the AirQualityApp.
+
+        Args:
+            master: The root Tkinter window.
+        """
+        self.master = master
+        self.current_language = "en"  # Default language
+        self.master.title(MESSAGES[self.current_language]["app_title"])
+
+        # Stores raw station data fetched from API
+        self.all_stations_data = []
+        # Stores processed hierarchical data: Province -> District -> Commune -> City -> List of Stations
+        self.geographical_data = {}
+        # Stores a mapping from displayed station name to its ID
+        self.current_stations_map = {}
+
+        # Variables for dropdown selections
+        self.province_var = tk.StringVar(self.master)
+        self.district_var = tk.StringVar(self.master)
+        self.commune_var = tk.StringVar(self.master)
+        self.city_var = tk.StringVar(self.master)
+        self.station_var = tk.StringVar(self.master)
+        self.sensor_var = tk.StringVar(self.master) # New variable for sensor selection
+
+        # References to combobox widgets
+        self.province_combobox = None
+        self.district_combobox = None
+        self.commune_combobox = None
+        self.city_combobox = None
+        self.station_combobox = None
+        self.sensor_combobox = None # New combobox for sensors
+
+        self.language_frame = None
+        self.main_frame = None
+
+        # Stores sensors for the currently selected station
+        self.current_sensors_data = {}
+        # Stores a mapping from displayed sensor name (parameter) to its ID
+        self.current_sensors_map = {}
+
+        # Fetch and process station data before creating the UI
+        self._initialize_station_data()
+        self._create_language_selection()
+
+    def _initialize_station_data(self):
+        """
+        Fetches all station data from the GIOŚ API using the 'api' module
+        and builds the hierarchical geographical data structure.
+        """
+        print(MESSAGES[self.current_language]["loading_stations_api"])
+        
+        # Use api.py to fetch stations data
+        stations_data = api.fetch_stations()
+
+        if stations_data:
+            self.all_stations_data = stations_data
+            self.geographical_data = self._build_hierarchical_data(self.all_stations_data)
+            print(MESSAGES[self.current_language]["data_fetch_success"])
+        else:
+            # The API call failed and api.fetch_stations returned None
+            messagebox.showerror(MESSAGES[self.current_language]["api_error_title"],
+                                 MESSAGES[self.current_language]["api_error_message"])
+            print("Failed to fetch stations data.")
+            # If API fails, geographical_data remains empty.
+            # In a full application, you might load from a local database here as a fallback.
+
+
+    def _build_hierarchical_data(self, stations):
+        """
+        Builds a nested dictionary structure from a flat list of station data.
+        Structure: Province -> District -> Commune -> City -> List of Stations
+        This function handles potential missing data gracefully by providing 'Unknown' labels.
+        """
+        hierarchical_data = {}
+        for station in stations:
+            # Safely get nested data using .get() with default empty dictionaries
+            city_info = station.get('city', {})
+            commune_info = city_info.get('commune', {})
+
+            province_name = commune_info.get('provinceName', 'Nieznane Województwo')
+            district_name = commune_info.get('districtName', 'Nieznany Powiat')
+            commune_name = commune_info.get('communeName', 'Nieznana Gmina')
+            city_name = city_info.get('name', 'Nieznane Miasto')
+
+            # Ensure all levels of the hierarchy exist
+            if province_name not in hierarchical_data:
+                hierarchical_data[province_name] = {}
+            if district_name not in hierarchical_data[province_name]:
+                hierarchical_data[province_name][district_name] = {}
+            if commune_name not in hierarchical_data[province_name][district_name]:
+                hierarchical_data[province_name][district_name][commune_name] = {}
+            if city_name not in hierarchical_data[province_name][district_name][commune_name]:
+                hierarchical_data[province_name][district_name][commune_name][city_name] = []
+
+            # Append the station to the lowest level
+            hierarchical_data[province_name][district_name][commune_name][city_name].append(station)
+        return hierarchical_data
+
+
+    def _create_language_selection(self):
+        """
+        Creates the initial language selection interface.
+        """
+        if self.main_frame:
+            self.main_frame.destroy()  # Remove main menu if it exists
+
+        self.language_frame = ttk.Frame(self.master, padding="20")
+        self.language_frame.pack(expand=True, fill="both")
+
+        ttk.Label(self.language_frame, text=MESSAGES[self.current_language]["welcome_message"],
+                  font=("Arial", 12, "italic")).pack(pady=10)
+
+        lang_label = ttk.Label(self.language_frame, text=MESSAGES[self.current_language]["select_language"],
+                               font=("Arial", 14, "bold"))
+        lang_label.pack(pady=10)
+
+        # Radio buttons for language selection
+        self.language_choice = tk.StringVar(value="en")  # Default to English
+
+        rb_polish = ttk.Radiobutton(self.language_frame, text=MESSAGES[self.current_language]["polish"],
+                                    variable=self.language_choice, value="pl", command=self._set_language)
+        rb_polish.pack(pady=5)
+
+        rb_english = ttk.Radiobutton(self.language_frame, text=MESSAGES[self.current_language]["english"],
+                                     variable=self.language_choice, value="en", command=self._set_language)
+        rb_english.pack(pady=5)
+
+        # Set initial language based on default
+        self._set_language()
+
+
+    def _set_language(self):
+        """
+        Sets the current language and updates the UI accordingly.
+        """
+        new_lang = self.language_choice.get()
+        if new_lang != self.current_language:
+            self.current_language = new_lang
+            self.master.title(MESSAGES[self.current_language]["app_title"])
+            messagebox.showinfo(MESSAGES[self.current_language]["app_title"],
+                                MESSAGES[self.current_language]["language_selected"].format(language=new_lang.upper()))
+            # Recreate the main menu if it's already shown to update labels
+            if self.main_frame:
+                self.language_frame.destroy()
+                self._create_main_menu()
+            else: # If not yet shown, destroy language frame and create main menu
+                self.language_frame.destroy()
+                self._create_main_menu()
+
+
+    def _create_main_menu(self):
+        """
+        Creates the main menu interface for location and station selection.
+        """
+        self.main_frame = ttk.Frame(self.master, padding="20")
+        self.main_frame.pack(expand=True, fill="both")
+
+        ttk.Label(self.main_frame, text=MESSAGES[self.current_language]["main_menu_title"],
+                  font=("Arial", 16, "bold")).pack(pady=20)
+
+        # Province selection
+        ttk.Label(self.main_frame, text=MESSAGES[self.current_language]["select_province"],
+                  font=("Arial", 12)).pack(pady=5, anchor="w")
+        provinces = sorted(list(self.geographical_data.keys())) # Sort for consistent order
+        self.province_combobox = ttk.Combobox(self.main_frame, textvariable=self.province_var,
+                                              values=provinces, state="readonly")
+        self.province_combobox.pack(fill="x", pady=5)
+        self.province_combobox.bind("<<ComboboxSelected>>", self._on_province_selected)
+
+        # District selection
+        ttk.Label(self.main_frame, text=MESSAGES[self.current_language]["select_district"],
+                  font=("Arial", 12)).pack(pady=5, anchor="w")
+        self.district_combobox = ttk.Combobox(self.main_frame, textvariable=self.district_var,
+                                              values=[], state="disabled") # Disabled initially
+        self.district_combobox.pack(fill="x", pady=5)
+        self.district_combobox.bind("<<ComboboxSelected>>", self._on_district_selected)
+
+        # Commune selection
+        ttk.Label(self.main_frame, text=MESSAGES[self.current_language]["select_commune"],
+                  font=("Arial", 12)).pack(pady=5, anchor="w")
+        self.commune_combobox = ttk.Combobox(self.main_frame, textvariable=self.commune_var,
+                                             values=[], state="disabled") # Disabled initially
+        self.commune_combobox.pack(fill="x", pady=5)
+        self.commune_combobox.bind("<<ComboboxSelected>>", self._on_commune_selected)
+
+        # City selection
+        ttk.Label(self.main_frame, text=MESSAGES[self.current_language]["select_city"],
+                  font=("Arial", 12)).pack(pady=5, anchor="w")
+        self.city_combobox = ttk.Combobox(self.main_frame, textvariable=self.city_var,
+                                          values=[], state="disabled") # Disabled initially
+        self.city_combobox.pack(fill="x", pady=5)
+        self.city_combobox.bind("<<ComboboxSelected>>", self._on_city_selected)
+
+        # Station selection
+        ttk.Label(self.main_frame, text=MESSAGES[self.current_language]["select_station"],
+                  font=("Arial", 12)).pack(pady=5, anchor="w")
+        self.station_combobox = ttk.Combobox(self.main_frame, textvariable=self.station_var,
+                                             values=[], state="disabled") # Disabled initially
+        self.station_combobox.pack(fill="x", pady=5)
+        self.station_combobox.bind("<<ComboboxSelected>>", self._on_station_selected) # Bind new event for station selection
+
+        # Sensor selection (New Combobox)
+        ttk.Label(self.main_frame, text=MESSAGES[self.current_language]["select_sensor"],
+                  font=("Arial", 12)).pack(pady=5, anchor="w")
+        self.sensor_combobox = ttk.Combobox(self.main_frame, textvariable=self.sensor_var,
+                                            values=[], state="disabled") # Disabled initially
+        self.sensor_combobox.pack(fill="x", pady=5)
+        self.sensor_combobox.bind("<<ComboboxSelected>>", self._on_sensor_selected) # Bind event for sensor selection
+
+        # Load Data button
+        load_button = ttk.Button(self.main_frame, text=MESSAGES[self.current_language]["load_data"],
+                                 command=self._load_station_data) # This will now trigger sensor/measurement loading
+        load_button.pack(pady=20)
+
+    def _reset_comboboxes(self, level):
+        """
+        Resets and clears comboboxes based on the level of selection,
+        and disables them until relevant data is available.
+        """
+        if level <= 0: # Reset all subsequent comboboxes (district, commune, city, station, sensor)
+            self.district_var.set("")
+            self.district_combobox["values"] = []
+            self.district_combobox.config(state="disabled")
+
+        if level <= 1: # Reset commune, city, station, sensor
+            self.commune_var.set("")
+            self.commune_combobox["values"] = []
+            self.commune_combobox.config(state="disabled")
+
+        if level <= 2: # Reset city, station, sensor
+            self.city_var.set("")
+            self.city_combobox["values"] = []
+            self.city_combobox.config(state="disabled")
+
+        if level <= 3: # Reset station, sensor
+            self.station_var.set("")
+            self.station_combobox["values"] = []
+            self.station_combobox.config(state="disabled")
+            self.current_stations_map = {} # Clear the station ID map
+        
+        if level <= 4: # Reset sensor
+            self.sensor_var.set("")
+            self.sensor_combobox["values"] = []
+            self.sensor_combobox.config(state="disabled")
+            self.current_sensors_map = {} # Clear the sensor ID map
+
+
+    def _on_province_selected(self, event=None):
+        """
+        Handles province selection: populates the district combobox.
+        """
+        selected_province = self.province_var.get()
+        self._reset_comboboxes(0) # Reset all lower level comboboxes
+
+        if selected_province and selected_province in self.geographical_data:
+            districts = sorted(list(self.geographical_data[selected_province].keys()))
+            self.district_combobox["values"] = districts
+            self.district_combobox.config(state="readonly")
+            if districts:
+                self.district_var.set(districts[0]) # Auto-select first district
+                self._on_district_selected() # Trigger next level update
+            else:
+                self.district_combobox.config(state="disabled") # No districts, disable
+        else:
+            messagebox.showwarning(MESSAGES[self.current_language]["error"],
+                                   MESSAGES[self.current_language]["no_province_selected"])
+
+
+    def _on_district_selected(self, event=None):
+        """
+        Handles district selection: populates the commune combobox.
+        """
+        selected_province = self.province_var.get()
+        selected_district = self.district_var.get()
+        self._reset_comboboxes(1) # Reset commune, city, station, sensor
+
+        if selected_province and selected_district and \
+           selected_district in self.geographical_data.get(selected_province, {}):
+            communes = sorted(list(self.geographical_data[selected_province][selected_district].keys()))
+            self.commune_combobox["values"] = communes
+            self.commune_combobox.config(state="readonly")
+            if communes:
+                self.commune_var.set(communes[0])
+                self._on_commune_selected()
+            else:
+                self.commune_combobox.config(state="disabled") # No communes, disable
+        else:
+            messagebox.showwarning(MESSAGES[self.current_language]["error"],
+                                   MESSAGES[self.current_language]["no_district_selected"])
+
+    def _on_commune_selected(self, event=None):
+        """
+        Handles commune selection: populates the city combobox.
+        """
+        selected_province = self.province_var.get()
+        selected_district = self.district_var.get()
+        selected_commune = self.commune_var.get()
+        self._reset_comboboxes(2) # Reset city, station, sensor
+
+        if selected_province and selected_district and selected_commune and \
+           selected_commune in self.geographical_data.get(selected_province, {}).get(selected_district, {}):
+            cities = sorted(list(self.geographical_data[selected_province][selected_district][selected_commune].keys()))
+            self.city_combobox["values"] = cities
+            self.city_combobox.config(state="readonly")
+            if cities:
+                self.city_var.set(cities[0])
+                self._on_city_selected()
+            else:
+                self.city_combobox.config(state="disabled") # No cities, disable
+        else:
+            messagebox.showwarning(MESSAGES[self.current_language]["error"],
+                                   MESSAGES[self.current_language]["no_commune_selected"])
+
+
+    def _on_city_selected(self, event=None):
+        """
+        Handles city selection: populates the station combobox with station names and addresses.
+        Also builds a map from display name to station ID.
+        """
+        selected_province = self.province_var.get()
+        selected_district = self.district_var.get()
+        selected_commune = self.commune_var.get()
+        selected_city = self.city_var.get()
+        self._reset_comboboxes(3) # Reset station, sensor
+
+        if selected_province and selected_district and selected_commune and selected_city and \
+           selected_city in self.geographical_data.get(selected_province, {}).get(selected_district, {}).get(selected_commune, {}):
+            stations = self.geographical_data[selected_province][selected_district][selected_commune][selected_city]
+
+            if stations:
+                # Format station display as "Station Name (ul. Address Street)"
+                # Store a mapping to get the station ID later
+                # Use .get() with a default for 'addressStreet' to prevent KeyError if it's missing
+                self.current_stations_map = {
+                    f"{s['stationName']} (ul. {s.get('addressStreet', 'Brak ulicy')})" if s.get('addressStreet') else s['stationName']: s['id']
+                    for s in stations
+                }
+                station_display_names = sorted(list(self.current_stations_map.keys()))
+                self.station_combobox["values"] = station_display_names
+                self.station_combobox.config(state="readonly")
+                self.station_var.set(station_display_names[0]) # Auto-select first station
+                self._on_station_selected() # Trigger sensor loading for the auto-selected station
+            else:
+                self.station_combobox["values"] = []
+                self.station_combobox.config(state="disabled")
+                messagebox.showinfo(MESSAGES[self.current_language]["app_title"],
+                                    MESSAGES[self.current_language]["no_stations_found"])
+        else:
+            messagebox.showwarning(MESSAGES[self.current_language]["error"],
+                                   MESSAGES[self.current_language]["no_city_selected"])
+
+    def _on_station_selected(self, event=None):
+        """
+        Handles station selection: populates the sensor combobox for the selected station.
+        """
+        selected_station_display = self.station_var.get()
+        self._reset_comboboxes(4) # Reset sensor
+
+        if selected_station_display:
+            station_id = self.current_stations_map.get(selected_station_display)
+            if station_id:
+                # Fetch sensors for the selected station using the API client
+                sensors_data = api.fetch_sensors_for_station(station_id)
+                if sensors_data:
+                    self.current_sensors_data = sensors_data
+                    self.current_sensors_map = {
+                        s['param']['paramName']: s['id']
+                        for s in sensors_data if 'param' in s and 'paramName' in s['param']
+                    }
+                    sensor_display_names = sorted(list(self.current_sensors_map.keys()))
+                    
+                    self.sensor_combobox["values"] = sensor_display_names
+                    self.sensor_combobox.config(state="readonly")
+                    if sensor_display_names:
+                        self.sensor_var.set(sensor_display_names[0]) # Auto-select first sensor
+                        self._on_sensor_selected() # Trigger data load for the first sensor if needed
+                    else:
+                        messagebox.showinfo(MESSAGES[self.current_language]["app_title"],
+                                            MESSAGES[self.current_language]["no_sensors_found"])
+                else:
+                    messagebox.showwarning(MESSAGES[self.current_language]["error"],
+                                           MESSAGES[self.current_language]["fetch_sensors_fail"])
+                    self.sensor_combobox.config(state="disabled")
+            else:
+                self.sensor_combobox.config(state="disabled")
+        else:
+            self.sensor_combobox.config(state="disabled")
+
+    def _on_sensor_selected(self, event=None):
+        """
+        Handles sensor selection. This can be used to trigger immediate data loading/display
+        if 'Load Data' button is not explicitly clicked, or simply prepare for it.
+        For now, it just prints the selected sensor.
+        """
+        selected_sensor_display = self.sensor_var.get()
+        if selected_sensor_display:
+            sensor_id = self.current_sensors_map.get(selected_sensor_display)
+            if sensor_id:
+                print(f"Selected Sensor: {selected_sensor_display} (ID: {sensor_id})")
+                # You might want to automatically load data here or enable a specific "View Chart" button
+            else:
+                print(f"Error: Sensor ID not found for {selected_sensor_display}")
+
+
+    def _load_station_data(self):
+        """
+        Loads data for the selected station AND its currently selected sensor.
+        This function now triggers fetching and processing of measurement data.
+        """
+        selected_station_display = self.station_var.get()
+        selected_sensor_display = self.sensor_var.get()
+
+        if not selected_station_display:
+            messagebox.showwarning(MESSAGES[self.current_language]["error"],
+                                   MESSAGES[self.current_language]["no_stations_found"])
+            return
+        
+        if not selected_sensor_display:
+            messagebox.showwarning(MESSAGES[self.current_language]["error"],
+                                   MESSAGES[self.current_language]["select_sensor"])
+            return
+
+        station_id = self.current_stations_map.get(selected_station_display)
+        sensor_id = self.current_sensors_map.get(selected_sensor_display)
+
+        if station_id and sensor_id:
+            messagebox.showinfo(MESSAGES[self.current_language]["app_title"],
+                                MESSAGES[self.current_language]["data_loaded"] + f" {selected_station_display} (ID: {station_id})")
+            print(f"Loading data for station ID: {station_id}, Sensor ID: {sensor_id}")
+
+            # --- INTEGRATION POINT: Call GIOŚ API for specific measurement data ---
+            raw_measurements = api.fetch_measurements_for_sensor(sensor_id)
+            
+            if raw_measurements:
+                # --- Process the raw data using the api.py's processing function ---
+                processed_data = api.process_measurement_data(raw_measurements)
+                
+                if processed_data and processed_data.get('values'):
+                    print(f"Successfully fetched and processed {len(processed_data['values'])} data points.")
+                    messagebox.showinfo(MESSAGES[self.current_language]["app_title"],
+                                         MESSAGES[self.current_language]["data_points_fetched"].format(
+                                             count=len(processed_data['values']), 
+                                             param_name=processed_data.get('key', 'Unknown Parameter')
+                                         ))
+                    # --- Next Steps from Project Requirements ---
+                    # 1. Save processed_data to SQLite database (future `database_manager.py` module)
+                    # 2. Present data in a chart (future `plotter.py` module, e.g., using matplotlib)
+                    # 3. Perform simple data analysis (min, max, avg, trend) (future `data_analyzer.py` module)
+                    
+                    # For demonstration, let's print some processed data
+                    print("First 5 processed data points:")
+                    for i, dp in enumerate(processed_data['values'][:5]):
+                        print(f"  {i+1}. Date: {dp['date']}, Value: {dp['value']}")
+                    print("\n")
+
+                else:
+                    messagebox.showwarning(MESSAGES[self.current_language]["error"],
+                                           MESSAGES[self.current_language]["process_data_fail"])
+            else:
+                messagebox.showwarning(MESSAGES[self.current_language]["error"],
+                                       MESSAGES[self.current_language]["fetch_measurements_fail"])
+        else:
+            messagebox.showwarning(MESSAGES[self.current_language]["error"],
+                                   MESSAGES[self.current_language]["no_stations_found"])
+
+
+def main():
+    root = tk.Tk()
+    app = AirQualityApp(root)
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()

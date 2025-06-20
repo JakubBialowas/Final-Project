@@ -1,0 +1,49 @@
+import sqlite3
+
+def create_connection(db_path="data/air_quality.db"):
+    conn = sqlite3.connect(db_path)
+    return conn
+
+def create_tables(conn):
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS stations (
+            id INTEGER PRIMARY KEY,
+            stationName TEXT,
+            city TEXT,
+            addressStreet TEXT
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS measurements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sensorId INTEGER,
+            date TEXT,
+            value REAL
+        )
+    ''')
+    conn.commit()
+
+def save_stations(conn, stations):
+    cursor = conn.cursor()
+    for st in stations:
+        cursor.execute('''
+            INSERT OR IGNORE INTO stations (id, stationName, city, addressStreet)
+            VALUES (?, ?, ?, ?)
+        ''', (
+            st['id'],
+            st['stationName'],
+            st['city']['name'] if st.get('city') else None,
+            st.get('addressStreet')
+        ))
+    conn.commit()
+
+def save_measurements(conn, sensor_id, measurements):
+    cursor = conn.cursor()
+    for v in measurements.get('values', []):
+        if v['value'] is not None:
+            cursor.execute('''
+                INSERT INTO measurements (sensorId, date, value)
+                VALUES (?, ?, ?)
+            ''', (sensor_id, v['date'], v['value']))
+    conn.commit()
